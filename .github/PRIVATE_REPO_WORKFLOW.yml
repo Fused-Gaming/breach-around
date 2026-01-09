@@ -1,0 +1,81 @@
+# ============================================================================
+# WORKFLOW TEMPLATE FOR PRIVATE REPOSITORY (breach-checker)
+# ============================================================================
+#
+# This file should be placed in your PRIVATE repository at:
+# .github/workflows/trigger-public-sync.yml
+#
+# What it does:
+# - Triggers when you create a release in the private repo
+# - Automatically syncs code to the public repo (breach-around)
+# - Public repo then builds and publishes to PyPI
+#
+# Setup Instructions:
+# 1. Copy this file to: Fused-Gaming/breach-checker/.github/workflows/trigger-public-sync.yml
+# 2. Create a Personal Access Token (PAT) with repo permissions
+# 3. Add the PAT as a secret in the PRIVATE repo: PUBLIC_REPO_DISPATCH_TOKEN
+# ============================================================================
+
+name: Trigger Public Repo Sync
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Tag name to sync (e.g., v1.0.0)'
+        required: true
+        type: string
+
+jobs:
+  trigger-sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Extract release info
+        id: release
+        run: |
+          if [ "${{ github.event_name }}" == "release" ]; then
+            TAG="${{ github.event.release.tag_name }}"
+            NOTES="${{ github.event.release.body }}"
+          else
+            TAG="${{ github.event.inputs.tag_name }}"
+            NOTES="Manual sync triggered for $TAG"
+          fi
+
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "notes<<EOF" >> $GITHUB_OUTPUT
+          echo "$NOTES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Trigger public repository sync
+        run: |
+          curl -X POST \
+            -H "Accept: application/vnd.github.v3+json" \
+            -H "Authorization: Bearer ${{ secrets.PUBLIC_REPO_DISPATCH_TOKEN }}" \
+            https://api.github.com/repos/Fused-Gaming/breach-around/dispatches \
+            -d '{
+              "event_type": "sync-release",
+              "client_payload": {
+                "tag_name": "${{ steps.release.outputs.tag }}",
+                "release_notes": ${{ toJSON(steps.release.outputs.notes) }},
+                "source_repo": "Fused-Gaming/breach-checker",
+                "triggered_by": "${{ github.actor }}"
+              }
+            }'
+
+      - name: Verification
+        run: |
+          echo "## Sync Trigger Sent! 🚀" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Tag:** ${{ steps.release.outputs.tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Target:** Fused-Gaming/breach-around" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status:** Dispatched successfully" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "The public repository will now:" >> $GITHUB_STEP_SUMMARY
+          echo "1. Sync the code from this private repo" >> $GITHUB_STEP_SUMMARY
+          echo "2. Create the release tag" >> $GITHUB_STEP_SUMMARY
+          echo "3. Build and publish to PyPI" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Check progress at: https://github.com/Fused-Gaming/breach-around/actions" >> $GITHUB_STEP_SUMMARY

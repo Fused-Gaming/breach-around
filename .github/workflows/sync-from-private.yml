@@ -1,0 +1,120 @@
+name: Sync from Private Repository
+
+on:
+  repository_dispatch:
+    types: [sync-release]
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Tag name from private repo (e.g., v1.0.0)'
+        required: true
+        type: string
+      release_notes:
+        description: 'Release notes'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync-and-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout public repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Checkout private repository
+        uses: actions/checkout@v4
+        with:
+          repository: Fused-Gaming/breach-checker
+          token: ${{ secrets.PRIVATE_REPO_ACCESS_TOKEN }}
+          path: private-repo
+          ref: ${{ github.event.inputs.tag_name || github.event.client_payload.tag_name }}
+
+      - name: Sync source code and assets
+        run: |
+          # Create src directory if it doesn't exist
+          mkdir -p src
+
+          # Copy source code from private repo (excluding sensitive files)
+          rsync -av --exclude='.git' \
+                    --exclude='.env' \
+                    --exclude='.env.*' \
+                    --exclude='*.key' \
+                    --exclude='*.pem' \
+                    --exclude='secrets/' \
+                    --exclude='__pycache__/' \
+                    --exclude='*.pyc' \
+                    --exclude='.pytest_cache/' \
+                    --exclude='venv/' \
+                    --exclude='input_data/' \
+                    --exclude='results/' \
+                    --exclude='logs/' \
+                    private-repo/ ./
+
+          # Ensure public-facing files are preserved
+          git checkout HEAD -- README.md CONTRIBUTING.md SETUP.md || true
+
+          # Clean up private repo checkout
+          rm -rf private-repo
+
+      - name: Extract tag version
+        id: version
+        run: |
+          TAG="${{ github.event.inputs.tag_name || github.event.client_payload.tag_name }}"
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Check for changes
+        id: changes
+        run: |
+          git add -A
+          if git diff --staged --quiet; then
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+            echo "No changes detected"
+          else
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+            echo "Changes detected"
+          fi
+
+      - name: Commit and push changes
+        if: steps.changes.outputs.has_changes == 'true'
+        run: |
+          git commit -m "Sync from private repo - ${{ steps.version.outputs.tag }}"
+          git push origin main
+
+      - name: Create and push tag
+        if: steps.changes.outputs.has_changes == 'true'
+        run: |
+          git tag ${{ steps.version.outputs.tag }} -m "Release ${{ steps.version.outputs.tag }}"
+          git push origin ${{ steps.version.outputs.tag }}
+
+      - name: Workflow summary
+        if: steps.changes.outputs.has_changes == 'true'
+        run: |
+          echo "## Sync Completed Successfully! 🎉" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version:** ${{ steps.version.outputs.tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Changes:** Synced and committed" >> $GITHUB_STEP_SUMMARY
+          echo "- **Tag:** Created and pushed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "The release workflow will now trigger automatically to publish to PyPI." >> $GITHUB_STEP_SUMMARY
+
+      - name: No changes summary
+        if: steps.changes.outputs.has_changes == 'false'
+        run: |
+          echo "## No Changes Detected ℹ️" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "The public repository is already up to date with the private repository." >> $GITHUB_STEP_SUMMARY

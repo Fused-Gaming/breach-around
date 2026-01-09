@@ -205,3 +205,17 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Security - Breach Around specific
+*.key
+*.pem
+*.crt
+*.cert
+secrets/
+credentials/
+input_data/
+results/
+logs/
+.env.local
+.env.*.local
+api_keys.txt
