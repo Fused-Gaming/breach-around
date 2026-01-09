@@ -1,4 +1,4 @@
-name: Immutable Release
+name: Release & Publish
 
 on:
   push:
@@ -24,6 +24,7 @@ jobs:
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=$GITHUB_REF_NAME" >> $GITHUB_OUTPUT
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -34,28 +35,92 @@ jobs:
         run: |
           python -m pip install --upgrade pip build twine
 
+      - name: Verify package structure
+        run: |
+          if [ ! -f "pyproject.toml" ] && [ ! -f "setup.py" ]; then
+            echo "⚠️ Warning: No pyproject.toml or setup.py found. Skipping package build."
+            echo "build_package=false" >> $GITHUB_ENV
+          else
+            echo "✓ Package configuration found"
+            echo "build_package=true" >> $GITHUB_ENV
+          fi
+
       - name: Build Python package (wheel + sdist)
+        if: env.build_package == 'true'
         run: |
           python -m build
+          ls -lah dist/
 
       - name: Create immutable zip archive
         run: |
           mkdir -p dist/zip
-          zip -r "dist/zip/${{ github.repository }}-${{ steps.version.outputs.version }}.zip" . \
-            -x ".git/*" ".github/*"
+          # Get the repository name without the owner
+          REPO_NAME="${{ github.repository }}"
+          REPO_NAME="${REPO_NAME#*/}"
+
+          zip -r "dist/zip/${REPO_NAME}-${{ steps.version.outputs.version }}.zip" . \
+            -x ".git/*" ".github/*" "*.pyc" "__pycache__/*" ".pytest_cache/*" \
+               "venv/*" ".venv/*" "*.egg-info/*" "dist/*" "build/*" \
+               ".env" ".env.*" "*.key" "*.pem" "secrets/*"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          name: Release ${{ github.ref_name }}
+          name: Release ${{ steps.version.outputs.tag }}
           generate_release_notes: true
+          body: |
+            ## 📦 Installation
+
+            ### From PyPI (Recommended)
+            ```bash
+            pip install breach-around
+            ```
+
+            ### From GitHub Release
+            ```bash
+            # Download and extract the zip
+            # Then install:
+            pip install .
+            ```
+
+            ### From Source
+            ```bash
+            git clone https://github.com/${{ github.repository }}.git
+            cd breach-around
+            pip install -e .
+            ```
+
+            ## 📝 Changes
+            See generated release notes below.
+
+            ---
           files: |
             dist/*.whl
             dist/*.tar.gz
             dist/zip/*.zip
 
-      # Optional: Publish to PyPI (OIDC, no secrets)
       - name: Publish to PyPI
-        if: startsWith(github.ref_name, 'v')
+        if: env.build_package == 'true' && startsWith(github.ref_name, 'v')
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          print-hash: true
+          verbose: true
+
+      - name: Workflow summary
+        run: |
+          echo "## Release Published Successfully! 🎉" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version:** ${{ steps.version.outputs.tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **GitHub Release:** Created with assets" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ env.build_package }}" == "true" ]; then
+            echo "- **PyPI:** Published ✓" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Install from PyPI" >> $GITHUB_STEP_SUMMARY
+            echo '```bash' >> $GITHUB_STEP_SUMMARY
+            echo "pip install breach-around==${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- **PyPI:** Skipped (no package configuration)" >> $GITHUB_STEP_SUMMARY
+          fi
